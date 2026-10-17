@@ -1,0 +1,55 @@
+#!/bin/bash
+set -eux
+exec > >(tee /var/log/ecommerce-bootstrap.log | logger -t user-data -s 2>/dev/console) 2>&1
+
+dnf install -y docker
+systemctl enable --now docker
+until docker info >/dev/null 2>&1; do sleep 2; done
+
+pull() {
+  for i in 1 2 3 4 5; do
+    docker pull "$1" && return 0
+    sleep 10
+  done
+  return 1
+}
+
+pull mongo:7
+pull ${dockerhub_username}/ecommerce-user:${image_tag}
+pull ${dockerhub_username}/ecommerce-products:${image_tag}
+pull ${dockerhub_username}/ecommerce-cart:${image_tag}
+pull ${dockerhub_username}/ecommerce-orders:${image_tag}
+pull ${dockerhub_username}/ecommerce-frontend:${image_tag}
+
+docker network create ecommerce-network
+
+docker run -d --name mongodb --network ecommerce-network --restart unless-stopped \
+  -v mongo-data:/data/db mongo:7
+sleep 15
+
+docker run -d --name user-service --network ecommerce-network --restart unless-stopped \
+  -e MONGODB_URI=mongodb://mongodb:27017/ecommerce_users \
+  -e JWT_SECRET='${jwt_secret}' \
+  ${dockerhub_username}/ecommerce-user:${image_tag}
+
+docker run -d --name product-service --network ecommerce-network --restart unless-stopped \
+  -e MONGODB_URI=mongodb://mongodb:27017/ecommerce_products \
+  ${dockerhub_username}/ecommerce-products:${image_tag}
+
+docker run -d --name cart-service --network ecommerce-network --restart unless-stopped \
+  -e MONGODB_URI=mongodb://mongodb:27017/ecommerce_carts \
+  -e PRODUCT_SERVICE_URL=http://product-service:3002 \
+  ${dockerhub_username}/ecommerce-cart:${image_tag}
+
+docker run -d --name order-service --network ecommerce-network --restart unless-stopped \
+  -e MONGODB_URI=mongodb://mongodb:27017/ecommerce_orders \
+  -e CART_SERVICE_URL=http://cart-service:3003 \
+  -e PRODUCT_SERVICE_URL=http://product-service:3002 \
+  -e USER_SERVICE_URL=http://user-service:3001 \
+  ${dockerhub_username}/ecommerce-orders:${image_tag}
+
+docker run -d --name ecommerce-frontend --network ecommerce-network --restart unless-stopped \
+  -p 80:80 ${dockerhub_username}/ecommerce-frontend:${image_tag}
+
+sleep 10
+docker ps

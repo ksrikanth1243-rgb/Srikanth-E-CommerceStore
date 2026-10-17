@@ -6,6 +6,7 @@ const dotenv = require('dotenv');
 dotenv.config();
 
 const app = express();
+app.get("/health", (req, res) => res.json({ service: "order-service", message: "order Service Running" }));
 const PORT = process.env.PORT || 3004;
 
 // Middleware
